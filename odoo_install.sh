@@ -14,6 +14,7 @@
 # ./odoo-install
 ################################################################################
 
+STAGING="True"
 OE_USER="odoo"
 OE_HOME="/$OE_USER"
 OE_HOME_EXT="/$OE_USER/${OE_USER}-server"
@@ -53,13 +54,19 @@ ADMIN_EMAIL="odoo@example.com"
 
 # Check if the operating system is Ubuntu 22.04
 if [[ $(lsb_release -r -s) == "22.04" ]]; then
-    WKHTMLTOX_X64="https://packages.ubuntu.com/jammy/wkhtmltopdf"
+    WKHTMLTOX_X64="https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6.1-3/wkhtmltox_0.12.6.1-3.jammy_amd64.deb"
     WKHTMLTOX_X32="https://packages.ubuntu.com/jammy/wkhtmltopdf"
     #No Same link works for both 64 and 32-bit on Ubuntu 22.04
 else
     # For older versions of Ubuntu
     WKHTMLTOX_X64="https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.$(lsb_release -c -s)_amd64.deb"
     WKHTMLTOX_X32="https://github.com/wkhtmltopdf/wkhtmltopdf/releases/download/0.12.5/wkhtmltox_0.12.5-1.$(lsb_release -c -s)_i386.deb"
+fi
+
+if [ $STAGING = "True" ]; then
+    STAGING_HEADER = "add_header  X-Robots-Tag \"noindex, nofollow, nosnippet, noarchive\";"
+else
+    STAGING_HEADER = ""
 fi
 
 #--------------------------------------------------
@@ -98,7 +105,7 @@ sudo su - postgres -c "createuser -s $OE_USER" 2> /dev/null || true
 #--------------------------------------------------
 echo -e "\n--- Installing Python 3 + pip3 --"
 sudo apt-get install python3 python3-pip
-sudo apt-get install git python3-cffi build-essential wget python3-dev python3-venv python3-wheel libxslt-dev libzip-dev libldap2-dev libsasl2-dev python3-setuptools node-less libpng-dev libjpeg-dev gdebi -y
+sudo apt-get install git python3-cffi build-essential wget python3-dev python3-venv python3-wheel libxslt-dev libzip-dev libldap2-dev libsasl2-dev python3-setuptools node-less libpng-dev libjpeg-dev gdebi xfonts-75dpi -y
 
 echo -e "\n---- Install python packages/requirements ----"
 sudo -H pip3 install -r https://github.com/Lean-Easy/odoo/raw/${OE_VERSION}/requirements.txt
@@ -123,7 +130,8 @@ if [ $INSTALL_WKHTMLTOPDF = "True" ]; then
 
   if [[ $(lsb_release -r -s) == "22.04" ]]; then
     # Ubuntu 22.04 LTS
-    sudo apt install wkhtmltopdf -y
+    sudo dpkg -i wkhtmltox_0.12.6.1-3.jammy_amd64.deb
+    sudo apt-get install -f
   else
       # For older versions of Ubuntu
     sudo gdebi --n `basename $_url`
@@ -300,6 +308,11 @@ if [ $INSTALL_NGINX = "True" ]; then
   echo -e "\n---- Installing and setting up Nginx ----"
   sudo apt install nginx -y
   cat <<EOF > ~/odoo
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  ''      close;
+}
+
 server {
   listen 80;
 
@@ -315,6 +328,9 @@ server {
   add_header X-XSS-Protection "1; mode=block";
   proxy_set_header X-Client-IP \$remote_addr;
   proxy_set_header HTTP_X_FORWARDED_HOST \$remote_addr;
+  add_header Strict-Transport-Security "max-age=31536000; includeSubDomains; preload";
+  add_header 'Content-Security-Policy' 'upgrade-insecure-requests';
+  $STAGING_HEADER
 
   #   odoo    log files
   access_log  /var/log/nginx/$OE_USER-access.log;
@@ -338,11 +354,15 @@ server {
   }
 
   #   enable  data    compression
-  gzip    on;
-  gzip_min_length 1100;
-  gzip_buffers    4   32k;
-  gzip_types  text/css text/less text/plain text/xml application/xml application/json application/javascript application/pdf image/jpeg image/png;
-  gzip_vary   on;
+  gzip on;
+  gzip_disable "msie6";
+  gzip_vary on;
+  gzip_proxied any;
+  gzip_comp_level 6;
+  gzip_buffers 32 16k;
+  gzip_http_version 1.1;
+  gzip_min_length 250;
+  gzip_types image/jpeg image/bmp image/svg+xml text/plain text/css application/json application/javascript application/x-javascript text/xml application/xml application/xml+rss text/javascript image/x-icon;
   client_header_buffer_size 4k;
   large_client_header_buffers 4 64k;
   client_max_body_size 0;
@@ -353,8 +373,15 @@ server {
     proxy_redirect off;
   }
 
-  location /longpolling {
+  location /websocket {
     proxy_pass http://127.0.0.1:$LONGPOLLING_PORT;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Real-IP $remote_addr;
+
   }
 
   location ~* .(js|css|png|jpg|jpeg|gif|ico)$ {
