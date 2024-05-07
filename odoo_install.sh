@@ -64,9 +64,9 @@ else
 fi
 
 if [ $STAGING = "True" ]; then
-    STAGING_HEADER = "add_header  X-Robots-Tag \"noindex, nofollow, nosnippet, noarchive\";"
+    STAGING_HEADER="add_header  X-Robots-Tag \"noindex, nofollow, nosnippet, noarchive\";"
 else
-    STAGING_HEADER = ""
+    STAGING_HEADER=""
 fi
 
 #--------------------------------------------------
